@@ -94,7 +94,14 @@ api_version = "2026-07"
   # uri = "/webhooks/orders/create"
 
 [build]
-# Leaves the production URL above intact only until the next `npm run dev`,
-# which repoints the Partner dashboard at the dev tunnel. Re-run
-# `npm run deploy` afterwards, or split out a separate dev config.
-automatically_update_urls_on_dev = true
+# The Partner dashboard keeps pointing at `application_url` above, even while
+# `shopify app dev` is running.
+#
+# Left true, every `npm run dev` silently repointed the installed app at that
+# session's tunnel, and the tunnel dies with the process — so the app was
+# reachable only for as long as someone had dev open, and the deployed URL
+# needed a `npm run deploy` to restore each time. Trading that for the dev
+# flow's one manual step is the better bargain: with this false, dev prints a
+# tunnel URL and it has to be pasted into the dashboard by hand for the
+# duration of a session that needs it.
+automatically_update_urls_on_dev = false
