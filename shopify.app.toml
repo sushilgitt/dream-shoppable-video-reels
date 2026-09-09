@@ -1,0 +1,100 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "6327a72e49c0eea7f3d3398898d42636"
+name = "Dream Shoppable Video Reels"
+handle = "dream-shoppable-video-reels"
+application_url = "https://dreamreels.91.239.208.85.sslip.io"
+embedded = true
+
+[access_scopes]
+# read_products — product picker, and the title/price/variant data cached onto
+#   video tags. The storefront payload is a static document with no Admin API
+#   behind it, so whatever is cached from here is exactly what shoppers see.
+#
+# write_pixels + read_customer_events — the Dream Reels analytics web pixel.
+#   Purchase attribution has to observe checkout, and the theme extension's
+#   script does not run there. write_pixels lets the app create the WebPixel
+#   record (it implies read_pixels); read_customer_events is what makes Shopify
+#   deliver the events to it.
+#
+# read_orders is intentionally absent. It is protected customer data, and
+# Shopify refuses to create an app version that requests it (or subscribes to
+# orders/* webhooks) until the app is approved. Approval is requested under
+# App setup → Protected customer data access in the Partner dashboard.
+#
+# Attribution deliberately does not depend on that approval: the web pixel
+# reads the cart attributes we wrote ourselves off checkout_completed, and none
+# of the fields it touches are PII, so no protected scope is involved. The
+# orders/create handler below stays as a second, equivalent source for anyone
+# who does get approved — both write through recordPurchase() and dedupe on the
+# same order id, so enabling it cannot double-count.
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,write_pixels,read_customer_events"
+
+[auth]
+redirect_urls = [
+  "https://dreamreels.91.239.208.85.sslip.io/auth/callback",
+  "https://dreamreels.91.239.208.85.sslip.io/auth/shopify/callback",
+  "https://dreamreels.91.239.208.85.sslip.io/api/auth/callback",
+]
+
+[webhooks]
+# Must match ApiVersion in app/shopify.server.ts. 2026-07 is the newest version
+# the installed @shopify/shopify-api supports — 2026-10 is not in its enum.
+api_version = "2026-07"
+
+  # Handled by: /app/routes/webhooks.app.uninstalled.tsx
+  # Without this, markUninstalled() never runs: sessions are never cleaned up
+  # and uninstalled shops keep counting as active installs.
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  # Handled by: /app/routes/webhooks.app.scopes_update.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  # Handled by: /app/routes/webhooks.compliance.tsx
+  #
+  # Mandatory for every public app. Shopify checks these during review and
+  # rejects the submission if they are absent or answer an unsigned probe with
+  # a 2xx. shop/redact arrives 48 hours after uninstall and is destructive by
+  # design — it deletes the shop and every video, widget and event with it.
+  [[webhooks.subscriptions]]
+  compliance_topics = [
+    "customers/data_request",
+    "customers/redact",
+    "shop/redact",
+  ]
+  uri = "/webhooks/compliance"
+
+  # ProductTag caches title, image and price so the storefront payload needs no
+  # Admin API call. These keep that cache honest — a stale price on a shoppable
+  # video is a support ticket at best.
+  [[webhooks.subscriptions]]
+  topics = [ "products/update" ]
+  uri = "/webhooks/products/update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "products/delete" ]
+  uri = "/webhooks/products/delete"
+
+  # Revenue attribution. The player writes cart attributes on add-to-cart and
+  # they survive into the order, so a sale is credited to the video that
+  # actually caused it rather than estimated.
+  #
+  # DISABLED until protected customer data access is approved. Shopify rejects
+  # the whole app version — extension included — if this is present without
+  # approval. The handler at /webhooks/orders/create is already built and
+  # tested; re-enable this block and add read_orders back to scopes once the
+  # Partner dashboard shows approval.
+  # [[webhooks.subscriptions]]
+  # topics = [ "orders/create" ]
+  # uri = "/webhooks/orders/create"
+
+[build]
+# Leaves the production URL above intact only until the next `npm run dev`,
+# which repoints the Partner dashboard at the dev tunnel. Re-run
+# `npm run deploy` afterwards, or split out a separate dev config.
+automatically_update_urls_on_dev = true
