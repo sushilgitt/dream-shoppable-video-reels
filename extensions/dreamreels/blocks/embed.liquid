@@ -9,6 +9,11 @@
   every page, so it must stay near-zero cost when the merchant has no floating
   or popup widget published — which is why it emits a bare container and lets
   the player decide whether anything is due.
+
+  The schema `name` below is capped at 25 characters by Shopify. "Dream Reels
+  floating video" was 26 and failed theme check outright, so the block is named
+  for what it renders instead: both the floating player and the popup are
+  overlays.
 {%- endcomment -%}
 
 {%- if block.settings.enabled -%}
@@ -30,7 +35,7 @@
 
 {% schema %}
 {
-  "name": "Dream Reels floating video",
+  "name": "Dream Reels overlay",
   "target": "body",
   "settings": [
     {
