@@ -296,9 +296,18 @@ export async function archiveVideo(shopId: string, videoId: string): Promise<voi
  *
  * Bunny fires each status change exactly once and never replays it. A webhook
  * dropped in flight — or one that fired before the library had a webhook URL
- * configured at all — leaves a video stuck in PROCESSING permanently, with no
- * path back and nothing surfaced to the merchant. Polling Bunny for anything
- * that has sat in PROCESSING past the grace period closes that hole.
+ * configured at all — leaves a video stuck with no path back and nothing
+ * surfaced to the merchant. Polling Bunny past the grace period closes that.
+ *
+ * UPLOADING is swept as well as PROCESSING, and that is the case this exists
+ * for. PROCESSING is only ever reached by a webhook arriving, so a library
+ * whose webhook URL is wrong or unset never moves a row out of UPLOADING at
+ * all — the bytes land, Bunny encodes them, and the video sits in the admin
+ * as though the upload had failed. Sweeping only PROCESSING could not see
+ * that: it waited for the very signal whose absence is the problem.
+ *
+ * A row still genuinely uploading is protected by the grace period, and by
+ * Bunny reporting it as anything other than finished.
  *
  * Cheap to run: the matched set is empty in the normal case, because the
  * webhook usually wins.
@@ -311,7 +320,7 @@ export async function reconcileProcessingVideos(
 
   const stuck = await prisma.video.findMany({
     where: {
-      status: VideoStatus.PROCESSING,
+      status: { in: [VideoStatus.PROCESSING, VideoStatus.UPLOADING] },
       bunnyVideoId: { not: null },
       archivedAt: null,
       updatedAt: { lt: cutoff },

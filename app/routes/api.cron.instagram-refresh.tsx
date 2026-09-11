@@ -39,8 +39,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const tokens = await refreshExpiringTokens();
-  const reaped = await reapStalledUploads();
+
+  // Reconcile before reaping, and never the other way round. Reaping fails
+  // every UPLOADING row past its cutoff without asking Bunny anything, so
+  // running it first would mark a video whose bytes arrived and encoded
+  // cleanly as "Upload did not complete" — and reconcile, which would have
+  // promoted it, then finds nothing left in UPLOADING to promote.
   const reconciled = await reconcileProcessingVideos();
+  const reaped = await reapStalledUploads();
 
   return Response.json({
     ok: true,
