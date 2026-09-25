@@ -1,16 +1,17 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { Form, useFetcher, useLoaderData } from "react-router";
+import { Form, useFetcher, useLoaderData, useRevalidator } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { ensureShop } from "../lib/shop.server";
+import { syncWithBunny } from "../lib/video.server";
 import {
   type PickedProduct,
   repairEmptyVariantTags,
@@ -29,14 +30,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   // published, so they cannot fix themselves; heal them on the way in.
   await repairEmptyVariantTags(admin, shop.id, String(params.videoId));
 
-  const video = await prisma.video.findFirst({
+  const found = await prisma.video.findFirst({
     where: { id: params.videoId, shopId: shop.id },
     include: { tags: { orderBy: { position: "asc" } } },
   });
 
-  if (!video) {
+  if (!found) {
     throw new Response("Video not found", { status: 404 });
   }
+
+  // Tagging is locked until the video is READY, and READY used to depend
+  // entirely on Bunny's webhook reaching us. Checking Bunny here means a
+  // finished encode unlocks tagging the moment the merchant looks.
+  const video = { ...found, ...(await syncWithBunny(found)) };
 
   return {
     video: {
@@ -131,6 +137,17 @@ export default function VideoDetail() {
 
   const ready = video.status === "READY";
 
+  // Poll while encoding, so "Tag products" enables itself when Bunny is done.
+  const revalidator = useRevalidator();
+  const encoding = video.status === "UPLOADING" || video.status === "PROCESSING";
+  useEffect(() => {
+    if (!encoding) return;
+    const timer = setInterval(() => {
+      if (revalidator.state === "idle") revalidator.revalidate();
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [encoding, revalidator]);
+
   return (
     <s-page heading={video.title}>
       <s-button
@@ -145,9 +162,13 @@ export default function VideoDetail() {
       </s-button>
 
       {!ready && (
-        <s-section heading="Still processing">
+        <s-section
+          heading={video.status === "FAILED" ? "Processing failed" : "Still processing"}
+        >
           <s-paragraph>
-            You can tag products once Bunny Stream finishes encoding this video.
+            {video.status === "FAILED"
+              ? "This video could not be processed. Remove it and upload it again."
+              : "You can tag products once Bunny Stream finishes encoding this video. This page updates by itself."}
           </s-paragraph>
         </s-section>
       )}

@@ -334,45 +334,108 @@ export async function reconcileProcessingVideos(
   let pending = 0;
 
   for (const video of stuck) {
-    try {
-      const remote = await getBunnyVideo(video.bunnyVideoId!);
-
-      // Only these two are definitively playable. JitSegmenting is still in
-      // flight, and promoting on it would publish a video that 404s.
-      if (
-        remote.status === BunnyApiStatus.Finished ||
-        remote.status === BunnyApiStatus.JitPlaylistsCreated
-      ) {
-        await promoteToReady(video);
-        promoted += 1;
-        continue;
-      }
-
-      if (
-        remote.status === BunnyApiStatus.Error ||
-        remote.status === BunnyApiStatus.UploadFailed
-      ) {
-        await prisma.video.update({
-          where: { id: video.id },
-          data: {
-            status: VideoStatus.FAILED,
-            errorMessage: "Bunny Stream could not encode this video.",
-          },
-        });
-        failed += 1;
-        continue;
-      }
-
-      pending += 1;
-    } catch (error) {
-      // A Bunny outage or a deleted remote asset shouldn't abort the sweep —
-      // the rest of the batch still deserves a chance.
-      console.error(`Reconcile failed for video ${video.id}`, error);
-      pending += 1;
-    }
+    const updated = await syncWithBunny(video);
+    if (updated.status === VideoStatus.READY) promoted += 1;
+    else if (updated.status === VideoStatus.FAILED) failed += 1;
+    else pending += 1;
   }
 
   return { promoted, failed, pending };
+}
+
+/**
+ * Reads one in-flight video's real state from Bunny and applies it.
+ *
+ * The webhook is not something this app controls end to end: the Bunny
+ * library holds a single webhook URL, and it is shared with another
+ * deployment. Whenever that URL points elsewhere — or the signing key is
+ * missing — encodes finish on Bunny's side and nothing here ever hears about
+ * it. The merchant then sits on "Still processing" for a video that has been
+ * playable for minutes, with only the daily cron to rescue it.
+ *
+ * Asking Bunny directly whenever the admin shows an in-flight video removes
+ * the dependency. The webhook stays as the fast path; this is the one that
+ * cannot be misconfigured away.
+ *
+ * Never throws: a Bunny hiccup leaves the row as it was, to be retried on the
+ * next look.
+ */
+export async function syncWithBunny(video: Video): Promise<Video> {
+  if (!video.bunnyVideoId) return video;
+  if (
+    video.status !== VideoStatus.UPLOADING &&
+    video.status !== VideoStatus.PROCESSING
+  ) {
+    return video;
+  }
+
+  try {
+    const remote = await getBunnyVideo(video.bunnyVideoId);
+
+    // Only these two are definitively playable. JitSegmenting is still in
+    // flight, and promoting on it would publish a video that 404s.
+    if (
+      remote.status === BunnyApiStatus.Finished ||
+      remote.status === BunnyApiStatus.JitPlaylistsCreated
+    ) {
+      return await promoteToReady(video);
+    }
+
+    if (
+      remote.status === BunnyApiStatus.Error ||
+      remote.status === BunnyApiStatus.UploadFailed
+    ) {
+      return await prisma.video.update({
+        where: { id: video.id },
+        data: {
+          status: VideoStatus.FAILED,
+          errorMessage: "Bunny Stream could not encode this video.",
+        },
+      });
+    }
+
+    // Bytes have landed and encoding is under way. Without this a library
+    // whose webhook never arrives would show "Uploading" for the whole encode.
+    // Deliberately leaves updatedAt alone otherwise, so the cron's grace
+    // period still measures from the last real change.
+    if (
+      video.status === VideoStatus.UPLOADING &&
+      remote.status !== BunnyApiStatus.Created
+    ) {
+      return await prisma.video.update({
+        where: { id: video.id },
+        data: { status: VideoStatus.PROCESSING },
+      });
+    }
+
+    return video;
+  } catch (error) {
+    console.error(`Bunny status check failed for video ${video.id}`, error);
+    return video;
+  }
+}
+
+/**
+ * Brings every in-flight video in a shop up to date with Bunny.
+ *
+ * Called from the admin loaders, so the check runs exactly when a merchant is
+ * looking. Bounded, and parallel, because it sits on the page's critical path.
+ */
+export async function syncShopInFlightVideos(
+  shopId: string,
+  limit = 10,
+): Promise<void> {
+  const inFlight = await prisma.video.findMany({
+    where: {
+      shopId,
+      archivedAt: null,
+      bunnyVideoId: { not: null },
+      status: { in: [VideoStatus.UPLOADING, VideoStatus.PROCESSING] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  await Promise.all(inFlight.map((video) => syncWithBunny(video)));
 }
 
 /**

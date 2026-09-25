@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -12,7 +12,11 @@ import prisma from "../db.server";
 import { ensureShop } from "../lib/shop.server";
 import { planFor } from "../lib/plans";
 import { isBunnyConfigured } from "../lib/bunny.server";
-import { archiveVideo, countActiveVideos } from "../lib/video.server";
+import {
+  archiveVideo,
+  countActiveVideos,
+  syncShopInFlightVideos,
+} from "../lib/video.server";
 import { repairEmptyVariantTags } from "../lib/tagging.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -23,6 +27,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // repairEmptyVariantTags. A no-op once healed, so it costs nothing to leave
   // on the page a merchant lands on most often.
   await repairEmptyVariantTags(admin, shop.id);
+
+  // Ask Bunny directly about anything still encoding, rather than waiting on a
+  // webhook that may be pointed at another deployment — see syncWithBunny.
+  await syncShopInFlightVideos(shop.id);
 
   const videos = await prisma.video.findMany({
     // PENDING is a TikTok post staged without a file yet. It is managed on the
@@ -178,6 +186,19 @@ export default function Videos() {
   );
 
   const inFlight = Object.values(uploads);
+
+  // Re-run the loader while anything is encoding, so a video flips to Ready
+  // on its own instead of waiting for the merchant to think of refreshing.
+  const encoding = videos.some(
+    (video) => video.status === "UPLOADING" || video.status === "PROCESSING",
+  );
+  useEffect(() => {
+    if (!encoding) return;
+    const timer = setInterval(() => {
+      if (revalidator.state === "idle") revalidator.revalidate();
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [encoding, revalidator]);
 
   return (
     <s-page heading="Videos">
