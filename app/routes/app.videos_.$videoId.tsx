@@ -168,7 +168,7 @@ export default function VideoDetail() {
           <s-paragraph>
             {video.status === "FAILED"
               ? "This video could not be processed. Remove it and upload it again."
-              : "You can tag products once Bunny Stream finishes encoding this video. This page updates by itself."}
+              : "Encoding can take 10 to 30 minutes, depending on the length and quality of the video. Please wait — you can tag products as soon as it finishes, and this page updates by itself."}
           </s-paragraph>
         </s-section>
       )}
