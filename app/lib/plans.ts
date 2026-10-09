@@ -60,7 +60,7 @@ export const PLANS: Record<Plan, PlanDefinition> = {
   ELITE: {
     id: Plan.ELITE,
     name: "Elite",
-    price: 59,
+    price: 60,
     views: 50_000,
     videos: 1_000,
     trialDays: 7,
