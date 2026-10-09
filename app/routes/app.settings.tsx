@@ -99,7 +99,6 @@ export default function Settings() {
                       : `$${plan.price.toFixed(2)}/month`}{" "}
                     · {plan.views.toLocaleString()} views ·{" "}
                     {plan.videos.toLocaleString()} videos
-                    {plan.trialDays > 0 ? ` · ${plan.trialDays}-day trial` : ""}
                   </s-text>
                   <s-text color="subdued">{plan.features.join(" · ")}</s-text>
                 </s-stack>
